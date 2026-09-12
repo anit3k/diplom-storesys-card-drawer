@@ -9,6 +9,7 @@ builder.Services.AddControllers()
 // DI
 builder.Services.AddHttpClient<IDeckClient, DeckClient>();
 builder.Services.AddScoped<ICardDrawService, CardDrawService>();
+builder.Services.AddSingleton<IEventStore, EventStore>();
 
 var app = builder.Build();
 

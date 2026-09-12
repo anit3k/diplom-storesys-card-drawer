@@ -19,8 +19,12 @@ src/CardDrawer/
 ├── IDeckClient.cs            interface for fetching the deck
 ├── DeckClient.cs              HTTP client implementation, calls the gist
 ├── ICardDrawService.cs        interface for drawing a card
-├── CardDrawService.cs          draws a uniformly random card from the deck
+├── CardDrawService.cs          draws a uniformly random card, raises a CardDrawn event
 ├── CardsController.cs        HTTP endpoint (GET /cards/random)
+├── Event.cs                  event feed model (SequenceNumber, OccurredAt, Name, Content)
+├── IEventStore.cs             interface for raising/reading events
+├── EventStore.cs               in-memory event store implementation
+├── EventFeedController.cs    HTTP endpoint (GET /events)
 ├── Program.cs
 ├── appsettings.json
 └── CardDrawer.csproj
@@ -85,23 +89,48 @@ classDiagram
     -HttpClient client
     +GetFullDeck() Task~List~Card~~
   }
+  class Event {
+    +long SequenceNumber
+    +DateTimeOffset OccurredAt
+    +string Name
+    +object Content
+  }
+  class IEventStore {
+    <<interface>>
+    +Raise(eventName, content) void
+    +GetEvents(first, last) IEnumerable~Event~
+  }
+  class EventStore {
+    -List~Event~ events
+    +Raise(eventName, content) void
+    +GetEvents(first, last) IEnumerable~Event~
+  }
   class ICardDrawService {
     <<interface>>
     +DrawRandomCard() Task~Card~
   }
   class CardDrawService {
     -IDeckClient deckClient
+    -IEventStore eventStore
     +DrawRandomCard() Task~Card~
   }
   class CardsController {
     -ICardDrawService cardDrawService
     +GetRandomCard() ActionResult~Card~
   }
+  class EventFeedController {
+    -IEventStore eventStore
+    +Get(start, end) ActionResult~Event[]~
+  }
 
   DeckClient ..|> IDeckClient
+  EventStore ..|> IEventStore
   CardDrawService ..|> ICardDrawService
   CardDrawService --> IDeckClient : uses
+  CardDrawService --> IEventStore : raises events via
   CardsController --> ICardDrawService : uses
+  EventFeedController --> IEventStore : uses
+  EventStore --> Event : stores
   DeckClient --> Card : parses into
   Card --> Suit
 ```
@@ -110,18 +139,22 @@ classDiagram
 
 ```mermaid
 flowchart TB
-  subgraph CardDrawer service
-    Controller[CardsController]
-    AppService[CardDrawService]
-    Client[DeckClient]
-    Domain[Card / Suit]
-  end
-  Gist[(GitHub Gist<br/>deck.json)]
+    subgraph CardDrawer service
+        Controller[CardsController]
+        EventController[EventFeedController]
+        AppService[CardDrawService]
+        Client[DeckClient]
+        Store[EventStore]
+        Domain[Card / Suit]
+    end
+    Gist[(GitHub Gist<br/>deck.json)]
 
-  Controller --> AppService
-  AppService --> Client
-  Client --> Domain
-  Client -- HTTP GET --> Gist
+    Controller --> AppService
+    AppService --> Client
+    AppService --> Store
+    EventController --> Store
+    Client --> Domain
+    Client -- HTTP GET --> Gist
 ```
 
 ## Related repositories
