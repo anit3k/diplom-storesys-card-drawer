@@ -28,12 +28,45 @@
         "description": "Draws a random card (52 cards + 3 jokers) with uniform probability and returns it as JSON."
       },
       "response": []
+    },
+    {
+      "name": "Get event feed",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/events?start=0&end=100",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "events"
+          ],
+          "query": [
+            {
+              "key": "start",
+              "value": "0"
+            },
+            {
+              "key": "end",
+              "value": "100"
+            }
+          ]
+        },
+        "description": "Returns CardDrawn events raised by the service, filtered by sequence number range."
+      },
+      "response": []
     }
   ],
   "variable": [
     {
       "key": "baseUrl",
-      "value": "https://localhost:5001",
+      "value": "https://localhost:7003",
       "type": "string"
     }
   ]
