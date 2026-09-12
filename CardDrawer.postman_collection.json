@@ -1,0 +1,40 @@
+{
+  "info": {
+    "name": "CardDrawer",
+    "description": "Postman collection for the diplom-storesys-card-drawer microservice.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Draw random card",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/cards/random",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "cards",
+            "random"
+          ]
+        },
+        "description": "Draws a random card (52 cards + 3 jokers) with uniform probability and returns it as JSON."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://localhost:5001",
+      "type": "string"
+    }
+  ]
+}
