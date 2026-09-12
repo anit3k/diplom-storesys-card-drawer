@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace CardDrawer;
 
+[ApiController]
 [Route("/events")]
 public class EventFeedController : ControllerBase
 {
