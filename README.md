@@ -10,8 +10,9 @@ Week 2 / chapter 2 deliverable. The service exposes a single HTTP endpoint that 
 
 The service follows the flat project structure used in chapter 2 of the book (see the [`book-reference/flat-structure`](https://github.com/anit3k/diplom-storesys-shopping-cart/tree/book-reference/flat-structure) branch of [diplom-storesys-shopping-cart](https://github.com/anit3k/diplom-storesys-shopping-cart) for the reference implementation), rather than a layered Clean Architecture split.
 
-- **Deck source**: a static JSON file (GitHub Gist) containing the full 55-card deck, acting as the "fake external service" the way the book's product catalog example uses a static file on GitHub.
+- **Deck source**: a static JSON file (GitHub Gist) containing the full 55-card deck, acting as the "fake card-deck microservice" the way the book's product catalog example uses a static file on GitHub.
 - **CardDrawer service**: fetches the deck from the gist via a typed `HttpClient` (`DeckClient`/`IDeckClient`), then draws one card uniformly at random via `CardDrawService`/`ICardDrawService`, and returns it through its own HTTP endpoint (`CardsController`).
+- **Event store**: an in-memory `IEventStore`/`EventStore`, following the book's chapter 2 event feed pattern — every card draw raises a `CardDrawn` event, exposed to other microservices via a `GET /events` endpoint on `EventFeedController`.
 
 ```
 src/CardDrawer/
@@ -51,6 +52,12 @@ Example response:
 
 ```json
 { "suit": "Hearts", "rank": "Queen", "isJoker": false }
+```
+
+You can then check the event feed for the CardDrawn events this generated:
+ 
+```powershell
+curl "https://localhost:7003/events?start=0&end=100"
 ```
 
 A Postman collection (`CardDrawer.postman_collection.json`) is included for manual testing — remember to set the `baseUrl` variable to match the port above.
@@ -160,7 +167,3 @@ flowchart TB
 ## Related repositories
 
 - [diplom-storesys-shopping-cart](https://github.com/anit3k/diplom-storesys-shopping-cart) — the ShoppingCart/ProductCatalog reference implementation this project's flat structure is modeled after.
-
-## Documentation
-
-Report-related documentation lives in `docs/` at the repository root.
