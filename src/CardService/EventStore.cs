@@ -1,4 +1,4 @@
-namespace CardDrawer;
+namespace CardService;
 
 public class EventStore : IEventStore
 {

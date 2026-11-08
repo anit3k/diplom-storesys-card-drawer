@@ -1,66 +1,78 @@
 # diplom-storesys-card-drawer
 
-Microservice that draws a random card from a full deck (52 cards + 3 jokers), fetched from a static deck source. Built for the "Udvikling af store systemer" module on the Diplomuddannelse i softwareudvikling, based on the microservice patterns from *Microservices in .NET* (2nd ed.) by Christian Horsdal Gammelgaard.
+A small two-microservice system for drawing playing cards. Built for the "Udvikling af store systemer" module on the Diplomuddannelse i softwareudvikling, based on the microservice patterns from *Microservices in .NET* (2nd ed.) by Christian Horsdal Gammelgaard.
+
+- **CardService** draws a random card from a full deck (52 cards + 3 jokers, equal probability) and returns it as JSON.
+- **GameService** receives a draw request, calls CardService over HTTP, and returns the drawn card.
 
 ## Assignment
 
-Week 2 / chapter 2 deliverable. The service exposes a single HTTP endpoint that returns a randomly drawn card as JSON, with equal probability for every card in the deck.
+The system exposes HTTP endpoints that return a randomly drawn card as JSON, with equal probability for every card in the deck. CardService owns the deck and the draw; GameService is the client-facing service that calls CardService.
 
 ## Architecture
 
-The service follows the flat project structure used in chapter 2 of the book (see the [`book-reference/flat-structure`](https://github.com/anit3k/diplom-storesys-shopping-cart/tree/book-reference/flat-structure) branch of [diplom-storesys-shopping-cart](https://github.com/anit3k/diplom-storesys-shopping-cart) for the reference implementation), rather than a layered Clean Architecture split.
+The services follow the flat project structure used in chapter 2 of the book (see the [`book-reference/flat-structure`](https://github.com/anit3k/diplom-storesys-shopping-cart/tree/book-reference/flat-structure) branch of [diplom-storesys-shopping-cart](https://github.com/anit3k/diplom-storesys-shopping-cart) for the reference implementation), rather than a layered Clean Architecture split.
 
-- **Deck source**: a static JSON file (GitHub Gist) containing the full 55-card deck, acting as the "fake card-deck microservice" the way the book's product catalog example uses a static file on GitHub.
-- **CardDrawer service**: fetches the deck from the gist via a typed `HttpClient` (`DeckClient`/`IDeckClient`), then draws one card uniformly at random via `CardDrawService`/`ICardDrawService`, and returns it through its own HTTP endpoint (`CardsController`).
-- **Event store**: an in-memory `IEventStore`/`EventStore`, following the book's chapter 2 event feed pattern — every card draw raises a `CardDrawn` event, exposed to other microservices via a `GET /events` endpoint on `EventFeedController`.
+- **CardService**: generates the full 55-card deck locally in code (`IDeck` / `Deck`) — no external dependency — then draws one card uniformly at random via `CardDrawService` / `ICardDrawService`, and returns it through its HTTP endpoint (`CardsController`, `GET /cards/random`). See [ADR 0001](docs/adr/0001-generate-deck-locally.md) for why the deck is local.
+- **GameService**: an ASP.NET Core Web API that will call CardService through a typed `HttpClient` and expose its own draw endpoint. (Endpoint and typed client are added in the next steps.)
+- **Event store** (CardService): an in-memory `IEventStore` / `EventStore`, following the book's chapter 2 event feed pattern — every card draw raises a `CardDrawn` event, exposed to other microservices via a `GET /events` endpoint on `EventFeedController`.
 
 ```
-src/CardDrawer/
-├── Card.cs                  domain model (Suit, Rank, IsJoker)
-├── IDeckClient.cs            interface for fetching the deck
-├── DeckClient.cs              HTTP client implementation, calls the gist
-├── ICardDrawService.cs        interface for drawing a card
-├── CardDrawService.cs          draws a uniformly random card, raises a CardDrawn event
-├── CardsController.cs        HTTP endpoint (GET /cards/random)
-├── Event.cs                  event feed model (SequenceNumber, OccurredAt, Name, Content)
-├── IEventStore.cs             interface for raising/reading events
-├── EventStore.cs               in-memory event store implementation
-├── EventFeedController.cs    HTTP endpoint (GET /events)
-├── Program.cs
-├── appsettings.json
-└── CardDrawer.csproj
+src/
+├── CardService/
+│   ├── Card.cs                  domain model (Suit, Rank, IsJoker)
+│   ├── IDeck.cs                  interface for the full deck
+│   ├── Deck.cs                   locally generated 55-card deck
+│   ├── ICardDrawService.cs       interface for drawing a card
+│   ├── CardDrawService.cs        draws a uniformly random card, raises a CardDrawn event
+│   ├── CardsController.cs        HTTP endpoint (GET /cards/random)
+│   ├── Event.cs                  event feed model (SequenceNumber, OccurredAt, Name, Content)
+│   ├── IEventStore.cs            interface for raising/reading events
+│   ├── EventStore.cs             in-memory event store implementation
+│   ├── EventFeedController.cs    HTTP endpoint (GET /events)
+│   ├── Program.cs
+│   ├── appsettings.json
+│   └── CardService.csproj
+└── GameService/
+    ├── Program.cs
+    ├── appsettings.json
+    └── GameService.csproj
 ```
 
 ## Running locally
 
+> The combined "run both services and draw a card" instructions, including fixed ports for both services and GameService's draw endpoint, are added in a later step. For now, CardService runs on its own:
+
 ```powershell
-cd src\CardDrawer
+cd src\CardService
 dotnet run
 ```
-
-The service listens on:
-- HTTP: `http://localhost:5054`
-- HTTPS: `https://localhost:7003`
 
 Then request a random card:
 
 ```powershell
-curl https://localhost:7003/cards/random
+curl http://localhost:5054/cards/random
 ```
 
-Example response:
+Example response (ordinary card):
 
 ```json
 { "suit": "Hearts", "rank": "Queen", "isJoker": false }
 ```
 
-You can then check the event feed for the CardDrawn events this generated:
- 
-```powershell
-curl "https://localhost:7003/events?start=0&end=100"
+Example response (joker):
+
+```json
+{ "suit": null, "rank": null, "isJoker": true }
 ```
 
-A Postman collection (`CardDrawer.postman_collection.json`) is included for manual testing — remember to set the `baseUrl` variable to match the port above.
+You can then check the event feed for the CardDrawn events this generated:
+
+```powershell
+curl "http://localhost:5054/events?start=0&end=100"
+```
+
+A Postman collection (`CardService.postman_collection.json`) is included for manual testing — set the `baseUrl` variable to match the port above.
 
 ## Tech stack
 
@@ -70,9 +82,9 @@ A Postman collection (`CardDrawer.postman_collection.json`) is included for manu
 
 ## AI-assisted development
 
-Parts of this project (planning, code review, and boilerplate scaffolding) were developed with assistance from Claude (Anthropic). AI was used as a pair-programming aid — for discussing architectural trade-offs, reviewing code the author wrote, and generating small, well-understood boilerplate (e.g. Postman collection, gist deck data) — not for producing the final domain logic unreviewed. All code was written and understood by the author as part of the learning objective for this module.
+Parts of this project (planning, code review, and boilerplate scaffolding) were developed with assistance from Claude (Anthropic). AI was used as a pair-programming aid — for discussing architectural trade-offs, reviewing code the author wrote, and generating small, well-understood boilerplate (e.g. Postman collection) — not for producing the final domain logic unreviewed. All code was written and understood by the author as part of the learning objective for this module.
 
-## Class diagram
+## Class diagram (CardService)
 
 ```mermaid
 classDiagram
@@ -88,13 +100,12 @@ classDiagram
     +string? Rank
     +bool IsJoker
   }
-  class IDeckClient {
+  class IDeck {
     <<interface>>
-    +GetFullDeck() Task~List~Card~~
+    +IReadOnlyList~Card~ Cards
   }
-  class DeckClient {
-    -HttpClient client
-    +GetFullDeck() Task~List~Card~~
+  class Deck {
+    +IReadOnlyList~Card~ Cards
   }
   class Event {
     +long SequenceNumber
@@ -114,12 +125,12 @@ classDiagram
   }
   class ICardDrawService {
     <<interface>>
-    +DrawRandomCard() Task~Card~
+    +DrawRandomCard() Card
   }
   class CardDrawService {
-    -IDeckClient deckClient
+    -IDeck deck
     -IEventStore eventStore
-    +DrawRandomCard() Task~Card~
+    +DrawRandomCard() Card
   }
   class CardsController {
     -ICardDrawService cardDrawService
@@ -130,15 +141,15 @@ classDiagram
     +Get(start, end) ActionResult~Event[]~
   }
 
-  DeckClient ..|> IDeckClient
+  Deck ..|> IDeck
   EventStore ..|> IEventStore
   CardDrawService ..|> ICardDrawService
-  CardDrawService --> IDeckClient : uses
+  CardDrawService --> IDeck : draws from
   CardDrawService --> IEventStore : raises events via
   CardsController --> ICardDrawService : uses
   EventFeedController --> IEventStore : uses
   EventStore --> Event : stores
-  DeckClient --> Card : parses into
+  Deck --> Card : generates
   Card --> Suit
 ```
 
@@ -146,22 +157,26 @@ classDiagram
 
 ```mermaid
 flowchart TB
-    subgraph CardDrawer service
+    subgraph GameService
+        GameController[Draw endpoint]
+        CardClient[CardService client]
+    end
+    subgraph CardService
         Controller[CardsController]
         EventController[EventFeedController]
         AppService[CardDrawService]
-        Client[DeckClient]
+        LocalDeck[Deck]
         Store[EventStore]
         Domain[Card / Suit]
     end
-    Gist[(GitHub Gist<br/>deck.json)]
 
+    GameController --> CardClient
+    CardClient -- HTTP GET --> Controller
     Controller --> AppService
-    AppService --> Client
+    AppService --> LocalDeck
     AppService --> Store
     EventController --> Store
-    Client --> Domain
-    Client -- HTTP GET --> Gist
+    LocalDeck --> Domain
 ```
 
 ## Related repositories

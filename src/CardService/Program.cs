@@ -1,4 +1,4 @@
-using CardDrawer;
+using CardService;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers()
@@ -6,7 +6,7 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
 // DI
-builder.Services.AddHttpClient<IDeckClient, DeckClient>();
+builder.Services.AddSingleton<IDeck, Deck>();
 builder.Services.AddScoped<ICardDrawService, CardDrawService>();
 builder.Services.AddSingleton<IEventStore, EventStore>();
 

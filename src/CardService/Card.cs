@@ -1,4 +1,4 @@
-namespace CardDrawer;
+namespace CardService;
 
 public enum Suit
 {

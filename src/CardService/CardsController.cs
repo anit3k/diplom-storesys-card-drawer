@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 
-namespace CardDrawer;
+namespace CardService;
 
 [ApiController]
 [Route("cards")]
@@ -14,9 +14,9 @@ public class CardsController : ControllerBase
     }
     
     [HttpGet("random")]
-    public async Task<ActionResult<Card>> GetRandomCard()
+    public ActionResult<Card> GetRandomCard()
     {
-        var card = await this.cardDrawService.DrawRandomCard();
+        var card = this.cardDrawService.DrawRandomCard();
         return card;
     }
 }

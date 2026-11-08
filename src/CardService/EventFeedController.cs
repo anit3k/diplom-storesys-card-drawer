@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 
-namespace CardDrawer;
+namespace CardService;
 
 [ApiController]
 [Route("/events")]
