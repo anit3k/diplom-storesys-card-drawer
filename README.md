@@ -34,6 +34,11 @@ src/
 │   ├── appsettings.json
 │   └── CardService.csproj
 └── GameService/
+    ├── Card.cs                   card DTO for deserializing CardService's response
+    ├── CardServiceOptions.cs     options bound from CardService:BaseUrl
+    ├── ICardServiceClient.cs     interface for the CardService client
+    ├── CardServiceClient.cs      typed HttpClient that calls CardService
+    ├── DrawController.cs         HTTP endpoint (GET /draw)
     ├── Program.cs
     ├── appsettings.json
     └── GameService.csproj
@@ -41,17 +46,33 @@ src/
 
 ## Running locally
 
-> The combined "run both services and draw a card" instructions, including fixed ports for both services and GameService's draw endpoint, are added in a later step. For now, CardService runs on its own:
+The system runs as two services on fixed HTTP ports (no HTTPS locally):
+
+| Service     | URL                   |
+|-------------|-----------------------|
+| CardService | http://localhost:5054 |
+| GameService | http://localhost:5064 |
+
+GameService reads CardService's base URL from its `appsettings.json` (`CardService:BaseUrl`), so start CardService first.
+
+Open **two** PowerShell terminals.
+
+Terminal 1 — CardService:
 
 ```powershell
-cd src\CardService
-dotnet run
+dotnet run --project src\CardService
 ```
 
-Then request a random card:
+Terminal 2 — GameService:
 
 ```powershell
-curl http://localhost:5054/cards/random
+dotnet run --project src\GameService
+```
+
+Draw a card through GameService — the happy path, where GameService calls CardService and returns the card:
+
+```powershell
+Invoke-RestMethod http://localhost:5064/draw
 ```
 
 Example response (ordinary card):
@@ -60,19 +81,25 @@ Example response (ordinary card):
 { "suit": "Hearts", "rank": "Queen", "isJoker": false }
 ```
 
-Example response (joker):
+Example response (joker — a joker has no suit and no rank):
 
 ```json
 { "suit": null, "rank": null, "isJoker": true }
 ```
 
-You can then check the event feed for the CardDrawn events this generated:
+You can also call CardService directly:
 
 ```powershell
-curl "http://localhost:5054/events?start=0&end=100"
+Invoke-RestMethod http://localhost:5054/cards/random
 ```
 
-A Postman collection (`CardService.postman_collection.json`) is included for manual testing — set the `baseUrl` variable to match the port above.
+And check the event feed for the CardDrawn events this generated:
+
+```powershell
+Invoke-RestMethod "http://localhost:5054/events?start=0&end=100"
+```
+
+A Postman collection (`CardService.postman_collection.json`) is included for manual testing. It has `cardServiceUrl` and `gameServiceUrl` variables preset to the ports above.
 
 ## Tech stack
 

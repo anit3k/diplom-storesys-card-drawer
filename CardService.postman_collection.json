@@ -1,12 +1,12 @@
 {
   "info": {
     "name": "CardService",
-    "description": "Postman collection for the CardService microservice (diplom-storesys-card-drawer).",
+    "description": "Postman collection for the diplom-storesys-card-drawer system (CardService + GameService).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
     {
-      "name": "Draw random card",
+      "name": "Draw card (GameService)",
       "request": {
         "method": "GET",
         "header": [
@@ -16,9 +16,32 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/cards/random",
+          "raw": "{{gameServiceUrl}}/draw",
           "host": [
-            "{{baseUrl}}"
+            "{{gameServiceUrl}}"
+          ],
+          "path": [
+            "draw"
+          ]
+        },
+        "description": "The happy path: GameService calls CardService and returns the drawn card as JSON."
+      },
+      "response": []
+    },
+    {
+      "name": "Draw random card (CardService)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{cardServiceUrl}}/cards/random",
+          "host": [
+            "{{cardServiceUrl}}"
           ],
           "path": [
             "cards",
@@ -30,7 +53,7 @@
       "response": []
     },
     {
-      "name": "Get event feed",
+      "name": "Get event feed (CardService)",
       "request": {
         "method": "GET",
         "header": [
@@ -40,9 +63,9 @@
           }
         ],
         "url": {
-          "raw": "{{baseUrl}}/events?start=0&end=100",
+          "raw": "{{cardServiceUrl}}/events?start=0&end=100",
           "host": [
-            "{{baseUrl}}"
+            "{{cardServiceUrl}}"
           ],
           "path": [
             "events"
@@ -58,15 +81,20 @@
             }
           ]
         },
-        "description": "Returns CardDrawn events raised by the service, filtered by sequence number range."
+        "description": "Returns CardDrawn events raised by CardService, filtered by sequence number range."
       },
       "response": []
     }
   ],
   "variable": [
     {
-      "key": "baseUrl",
-      "value": "https://localhost:7003",
+      "key": "cardServiceUrl",
+      "value": "http://localhost:5054",
+      "type": "string"
+    },
+    {
+      "key": "gameServiceUrl",
+      "value": "http://localhost:5064",
       "type": "string"
     }
   ]
