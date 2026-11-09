@@ -101,6 +101,17 @@ Invoke-RestMethod "http://localhost:5054/events?start=0&end=100"
 
 A Postman collection (`CardService.postman_collection.json`) is included for manual testing. It has `cardServiceUrl` and `gameServiceUrl` variables preset to the ports above.
 
+## Timeouts
+
+GameService's call to CardService is guarded by two explicit timeouts (via `Microsoft.Extensions.Http.Resilience`), configured under `CardService:Resilience` in GameService's `appsettings.json`:
+
+| Setting          | Default | Meaning                                                     |
+|------------------|---------|-------------------------------------------------------------|
+| `AttemptTimeout` | 500 ms  | per individual attempt (one HTTP request)                   |
+| `TotalTimeout`   | 3 s     | whole operation (all attempts + back-off waits)             |
+
+They are validated at startup and can be overridden for tests, e.g. `CardService__Resilience__AttemptTimeout` (values must be ≥ 10 ms, the Polly floor). Retry and circuit breaker are added in later steps. See [ADR 0003](docs/adr/0003-card-service-timeouts.md) (library choice: [ADR 0002](docs/adr/0002-resilience-library-choice.md)).
+
 ## Tech stack
 
 - .NET 10
