@@ -1,6 +1,8 @@
 using GameService;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Polly;
+using Polly.Timeout;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers()
@@ -17,6 +19,15 @@ builder.Services.AddOptions<CardServiceResilienceOptions>()
     .Validate(o => o.AttemptTimeout > TimeSpan.Zero, "CardService:Resilience:AttemptTimeout must be greater than zero.")
     .Validate(o => o.TotalTimeout > TimeSpan.Zero, "CardService:Resilience:TotalTimeout must be greater than zero.")
     .Validate(o => o.TotalTimeout > o.AttemptTimeout, "CardService:Resilience:TotalTimeout must be greater than AttemptTimeout.")
+    .Validate(o => o.MaxRetryAttempts >= 0, "CardService:Resilience:MaxRetryAttempts must be zero or greater.")
+    .Validate(o => o.RetryBaseDelay > TimeSpan.Zero, "CardService:Resilience:RetryBaseDelay must be greater than zero.")
+    // Worst case without jitter — every attempt hits its timeout plus every back-off wait —
+    // must fit inside the total timeout, otherwise the total timeout would cut off the last
+    // attempt before the retries are exhausted. Defaults (500 ms, 2 retries, 200 ms, 3 s)
+    // give 2.1 s < 3 s and so pass.
+    .Validate(
+        o => o.WorstCaseWithoutJitter() < o.TotalTimeout,
+        "CardService:Resilience: worst case without jitter ((MaxRetryAttempts + 1) * AttemptTimeout + exponential back-off) must be less than TotalTimeout.")
     .ValidateOnStart();
 
 builder.Services.AddHttpClient<ICardServiceClient, CardServiceClient>((serviceProvider, client) =>
@@ -48,9 +59,64 @@ builder.Services.AddHttpClient<ICardServiceClient, CardServiceClient>((servicePr
         // 1. Outer: total timeout for the whole operation.
         pipeline.AddTimeout(resilience.TotalTimeout);
 
-        // 2. Placeholder: retry and circuit breaker are added here on later steps.
-        //    They go BETWEEN the two timeouts on purpose (see ordering note above),
-        //    so no restructuring is needed to slot them in.
+        // 2. Retry (circuit breaker is added here on a later step, between retry and the
+        //    inner timeout). Sitting between the two timeouts, retry wraps the per-attempt
+        //    timeout (so an attempt timeout is retried) but is itself wrapped by the total
+        //    timeout (so retries never exceed the overall ceiling).
+        pipeline.AddRetry(new HttpRetryStrategyOptions
+        {
+            MaxRetryAttempts = resilience.MaxRetryAttempts,
+            BackoffType = DelayBackoffType.Exponential,
+            Delay = resilience.RetryBaseDelay,
+            UseJitter = resilience.UseJitter,
+
+            // Ignore the server's Retry-After header (we use our own back-off schedule).
+            ShouldRetryAfterHeader = false,
+
+            // Explicit predicate (not the default IsTransient) so the retried failures are
+            // visible here. Retry on: the per-attempt timeout, network failures, and the
+            // transient HTTP status codes 408, 429, 502, 503, 504.
+            // Do NOT retry on: 500 and other 4xx (deterministic / request faults), caller
+            // cancellation, or the total timeout — the last two surface as a cancelled
+            // operation, which is excluded below.
+            ShouldHandle = args =>
+            {
+                // Caller cancellation and the outer total timeout surface as cancellation;
+                // never retry those.
+                if (args.Outcome.Exception is OperationCanceledException)
+                {
+                    return ValueTask.FromResult(false);
+                }
+
+                // The inner per-attempt timeout. (The outer total timeout is outside this
+                // retry strategy, so the only TimeoutRejectedException reaching here is a
+                // single attempt timing out.)
+                if (args.Outcome.Exception is TimeoutRejectedException)
+                {
+                    return ValueTask.FromResult(true);
+                }
+
+                // Network-level failures (connection refused, DNS, socket reset, ...).
+                if (args.Outcome.Exception is HttpRequestException)
+                {
+                    return ValueTask.FromResult(true);
+                }
+
+                // Transient HTTP status codes signalled by the server/infrastructure.
+                if (args.Outcome.Result is { } response)
+                {
+                    var retry = response.StatusCode is
+                        System.Net.HttpStatusCode.RequestTimeout        // 408
+                        or System.Net.HttpStatusCode.TooManyRequests    // 429
+                        or System.Net.HttpStatusCode.BadGateway         // 502
+                        or System.Net.HttpStatusCode.ServiceUnavailable // 503
+                        or System.Net.HttpStatusCode.GatewayTimeout;    // 504
+                    return ValueTask.FromResult(retry);
+                }
+
+                return ValueTask.FromResult(false);
+            },
+        });
 
         // 3. Inner: per-attempt timeout.
         pipeline.AddTimeout(resilience.AttemptTimeout);

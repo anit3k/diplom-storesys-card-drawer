@@ -101,16 +101,21 @@ Invoke-RestMethod "http://localhost:5054/events?start=0&end=100"
 
 A Postman collection (`CardService.postman_collection.json`) is included for manual testing. It has `cardServiceUrl` and `gameServiceUrl` variables preset to the ports above.
 
-## Timeouts
+## Resilience
 
-GameService's call to CardService is guarded by two explicit timeouts (via `Microsoft.Extensions.Http.Resilience`), configured under `CardService:Resilience` in GameService's `appsettings.json`:
+GameService's call to CardService is guarded by an explicit resilience pipeline (via `Microsoft.Extensions.Http.Resilience`, Polly v8), configured under `CardService:Resilience` in GameService's `appsettings.json` and validated at startup:
 
-| Setting          | Default | Meaning                                                     |
-|------------------|---------|-------------------------------------------------------------|
-| `AttemptTimeout` | 500 ms  | per individual attempt (one HTTP request)                   |
-| `TotalTimeout`   | 3 s     | whole operation (all attempts + back-off waits)             |
+| Setting            | Default | Meaning                                                           |
+|--------------------|---------|-------------------------------------------------------------------|
+| `AttemptTimeout`   | 500 ms  | per individual attempt (one HTTP request)                         |
+| `TotalTimeout`     | 3 s     | whole operation (all attempts + back-off waits)                   |
+| `MaxRetryAttempts` | 2       | retries after the first attempt (3 attempts total)               |
+| `RetryBaseDelay`   | 200 ms  | base for exponential back-off (~200 ms, ~400 ms)                 |
+| `UseJitter`        | true    | jitter the back-off in production; tests turn it off             |
 
-They are validated at startup and can be overridden for tests, e.g. `CardService__Resilience__AttemptTimeout` (values must be ≥ 10 ms, the Polly floor). Retry and circuit breaker are added in later steps. See [ADR 0003](docs/adr/0003-card-service-timeouts.md) (library choice: [ADR 0002](docs/adr/0002-resilience-library-choice.md)).
+**Retry** fires only on transient failures — the per-attempt timeout, network errors, and HTTP 408/429/502/503/504 — with exponential back-off + jitter. It does **not** retry 500, other 4xx, caller cancellation, or the total timeout. Circuit breaker is added in a later step.
+
+Values can be overridden for tests, e.g. `CardService__Resilience__RetryBaseDelay` / `__UseJitter` (timeouts must be ≥ 10 ms, the Polly floor). See [ADR 0003](docs/adr/0003-card-service-timeouts.md) (timeouts) and [ADR 0004](docs/adr/0004-retry-on-transient-failures.md) (retry); library choice in [ADR 0002](docs/adr/0002-resilience-library-choice.md).
 
 ## Tech stack
 
