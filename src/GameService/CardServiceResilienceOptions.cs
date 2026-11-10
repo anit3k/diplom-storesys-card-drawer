@@ -5,7 +5,6 @@ namespace GameService;
 /// Bound from the "CardService:Resilience" section of appsettings.json and validated
 /// at startup (see Program.cs). Values are configurable so tests can override them
 /// (e.g. a short retry base delay and jitter off for deterministic results).
-/// Circuit breaker is added in a later step.
 /// </summary>
 public class CardServiceResilienceOptions
 {
@@ -37,6 +36,32 @@ public class CardServiceResilienceOptions
     /// in lockstep); tests turn it off for deterministic timing.
     /// </summary>
     public bool UseJitter { get; set; }
+
+    /// <summary>
+    /// Circuit breaker: fraction of failures (within the sampling window, once the minimum
+    /// throughput is reached) at which the breaker opens. Must be in (0, 1].
+    /// </summary>
+    public double FailureRatio { get; set; }
+
+    /// <summary>
+    /// Circuit breaker: minimum number of calls in the sampling window before the failure
+    /// ratio is evaluated at all. Must be >= 2. With low traffic a high value means the
+    /// breaker may never open — hence we set it explicitly rather than use the default (100).
+    /// </summary>
+    public int MinimumThroughput { get; set; }
+
+    /// <summary>
+    /// Circuit breaker: how far back the breaker looks when computing the failure ratio (the
+    /// measurement window). Distinct from <see cref="BreakDuration"/>. Library range: 0.5 s .. 1 day.
+    /// </summary>
+    public TimeSpan SamplingDuration { get; set; }
+
+    /// <summary>
+    /// Circuit breaker: how long the breaker stays open (rejecting calls fast) before it goes
+    /// half-open and lets one trial call through. Distinct from <see cref="SamplingDuration"/>.
+    /// Library range: 0.5 s .. 1 day.
+    /// </summary>
+    public TimeSpan BreakDuration { get; set; }
 
     /// <summary>
     /// Worst-case duration WITHOUT jitter: every attempt hits its timeout, plus every

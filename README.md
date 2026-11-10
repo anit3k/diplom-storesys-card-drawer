@@ -112,10 +112,18 @@ GameService's call to CardService is guarded by an explicit resilience pipeline 
 | `MaxRetryAttempts` | 2       | retries after the first attempt (3 attempts total)               |
 | `RetryBaseDelay`   | 200 ms  | base for exponential back-off (~200 ms, ~400 ms)                 |
 | `UseJitter`        | true    | jitter the back-off in production; tests turn it off             |
+| `FailureRatio`     | 0.5     | failure fraction (over the window) that opens the breaker        |
+| `MinimumThroughput`| 6       | min calls in the window before the ratio is judged               |
+| `SamplingDuration` | 30 s    | window the failure ratio is measured over                        |
+| `BreakDuration`    | 10 s    | how long the breaker stays open before a half-open trial         |
 
-**Retry** fires only on transient failures — the per-attempt timeout, network errors, and HTTP 408/429/502/503/504 — with exponential back-off + jitter. It does **not** retry 500, other 4xx, caller cancellation, or the total timeout. Circuit breaker is added in a later step.
+Pipeline order: total timeout → **retry** → **circuit breaker** → attempt timeout.
 
-Values can be overridden for tests, e.g. `CardService__Resilience__RetryBaseDelay` / `__UseJitter` (timeouts must be ≥ 10 ms, the Polly floor). See [ADR 0003](docs/adr/0003-card-service-timeouts.md) (timeouts) and [ADR 0004](docs/adr/0004-retry-on-transient-failures.md) (retry); library choice in [ADR 0002](docs/adr/0002-resilience-library-choice.md).
+**Retry** fires only on transient failures — the per-attempt timeout, network errors, and HTTP 408/429/502/503/504 — with exponential back-off + jitter. It does **not** retry 500, other 4xx, caller cancellation, the total timeout, or a call rejected by an open breaker.
+
+**Circuit breaker** sits inside retry (so every attempt counts). It counts as failures the per-attempt timeout, network errors, **all 5xx including 500**, and 408/429 — but **not** other 4xx. The failure list deliberately differs from retry's: retry asks "will another attempt help?", the breaker asks "is the service healthy?". When open it fails fast (no downstream call, no retry) for `BreakDuration`, then allows one half-open trial. Because one fully failed request = 3 attempts, the breaker opens after ~2 fully failed requests (or ~6 requests for non-retried 500s).
+
+Values can be overridden for tests, e.g. `CardService__Resilience__RetryBaseDelay` / `__UseJitter` / `__BreakDuration` (timeouts must be ≥ 10 ms; breaker durations ≥ 500 ms — Polly floors). See [ADR 0003](docs/adr/0003-card-service-timeouts.md) (timeouts), [ADR 0004](docs/adr/0004-retry-on-transient-failures.md) (retry) and [ADR 0006](docs/adr/0006-circuit-breaker.md) (circuit breaker); library choice in [ADR 0002](docs/adr/0002-resilience-library-choice.md).
 
 ### Idempotency
 
