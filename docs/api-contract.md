@@ -103,11 +103,37 @@ When a request cannot be fulfilled, both services return a single, shared error 
 ```json
 {
   "error": "card_service_unavailable",
-  "message": "The card service did not respond in time.",
+  "message": "Kortservicen er midlertidigt utilgængelig. Prøv igen om lidt.",
   "traceId": "00-7c3f...-01"
 }
 ```
 
-The concrete HTTP status codes for each failure case (e.g. request timeout, CardService
-unreachable, circuit open) are **not** fixed yet. They will be decided in a later step when
-timeout, retry, and circuit-breaker behaviour are added to GameService.
+This is GameService's own format (not RFC 9457 Problem Details); content type `application/json`.
+`message` is a short, friendly Danish text for the user; `error` is a stable machine-readable
+code; `traceId` is `Activity.Current?.TraceId` (or `HttpContext.TraceIdentifier` as a fallback).
+`error`/`message` never contain exception text, URLs, host/port names or stack traces — those are
+logged server-side only.
+
+### GameService `GET /draw` failure cases
+
+When the draw cannot be fulfilled, GameService returns:
+
+| Situation | Status | `error` |
+|---|---|---|
+| Timeout (per-attempt budget used up, or the overall limit) | `504` | `card_service_timeout` |
+| CardService unavailable (connection refused, network error, or HTTP 503 after all retries) | `503` | `card_service_unavailable` |
+| Circuit breaker open | `503` | `card_service_circuit_open` |
+| CardService returned 500, another non-503 5xx, a 4xx, or an invalid/incomplete body | `502` | `card_service_bad_response` |
+| Unexpected error in GameService itself | `500` | `internal_error` |
+
+Notes:
+
+- A CardService **500** becomes a **502** (not a passed-through 500): 502 tells the caller the
+  fault is in a dependency, not in GameService itself.
+- **`Retry-After`**: not sent. The circuit breaker's `BrokenCircuitException` exposes no
+  retry-after value in the installed Polly version, so there is nothing authoritative to put in
+  the header.
+- Caller cancellation (the client aborts) produces no error response and is not treated as a
+  failure.
+
+See [ADR 0007](adr/0007-error-responses.md).

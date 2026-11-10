@@ -129,6 +129,20 @@ Values can be overridden for tests, e.g. `CardService__Resilience__RetryBaseDela
 
 Because a retry could otherwise draw a second card and raise a second `CardDrawn` event, GameService sends one `Idempotency-Key` (a GUID) per draw — the same key across all retries of that draw. CardService caches key → card (default 5 min, `Idempotency:CacheDuration`): a repeated key returns the same card, raises no new event, and sets `Idempotency-Replayed: true`. No key = unchanged behaviour; an empty or over-128-character key returns `400`. See [ADR 0005](docs/adr/0005-idempotency-key-for-draw.md).
 
+### Error responses
+
+When a draw fails, GameService returns `{ "error", "message", "traceId" }` (`application/json`; `message` is a short Danish text, no internal detail — that is logged server-side only):
+
+| Situation | Status | `error` |
+|---|---|---|
+| Timeout | 504 | `card_service_timeout` |
+| CardService unavailable (unreachable, or 503 after retries) | 503 | `card_service_unavailable` |
+| Circuit breaker open | 503 | `card_service_circuit_open` |
+| CardService 500 / non-503 5xx / 4xx / invalid body | 502 | `card_service_bad_response` |
+| Unexpected error in GameService | 500 | `internal_error` |
+
+The typed client translates resilience-library failures into its own `CardServiceException`, and a central `IExceptionHandler` maps everything to the table above — the controller stays thin. A CardService 500 becomes 502 (the fault is a dependency's, not GameService's). See [ADR 0007](docs/adr/0007-error-responses.md).
+
 ## Tech stack
 
 - .NET 10

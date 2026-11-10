@@ -9,6 +9,12 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 
+// Central error handling: translate exceptions to our { error, message, traceId } body and the
+// right HTTP status (see CardServiceExceptionHandler + CardServiceErrorMapping). AddProblemDetails
+// only satisfies UseExceptionHandler's fallback requirement; our handler always handles.
+builder.Services.AddExceptionHandler<CardServiceExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 // Typed HttpClient for CardService; base URL from configuration (CardService:BaseUrl).
 builder.Services.Configure<CardServiceOptions>(builder.Configuration.GetSection("CardService"));
 
@@ -208,6 +214,9 @@ builder.Services.AddHttpClient<ICardServiceClient, CardServiceClient>((servicePr
     });
 
 var app = builder.Build();
+
+// Must be early in the pipeline so it catches exceptions from the controllers below.
+app.UseExceptionHandler();
 
 app.MapControllers();
 
