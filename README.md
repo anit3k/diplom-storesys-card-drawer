@@ -143,6 +143,26 @@ When a draw fails, GameService returns `{ "error", "message", "traceId" }` (`app
 
 The typed client translates resilience-library failures into its own `CardServiceException`, and a central `IExceptionHandler` maps everything to the table above — the controller stays thin. A CardService 500 becomes 502 (the fault is a dependency's, not GameService's). See [ADR 0007](docs/adr/0007-error-responses.md).
 
+## Health endpoints
+
+Both services expose a **liveness** endpoint, `GET /health/live`, that returns `200 OK` with body `Healthy` when the process is up. It checks **no** dependencies — in particular GameService's liveness does **not** call CardService — so a downstream outage never makes a healthy process look unhealthy (which would cause an orchestrator to restart it). See [ADR 0008](docs/adr/0008-liveness-health-endpoint.md).
+
+```powershell
+Invoke-WebRequest http://localhost:5054/health/live   # CardService -> 200, "Healthy"
+```
+
+```powershell
+Invoke-WebRequest http://localhost:5064/health/live   # GameService -> 200, "Healthy"
+```
+
+GameService stays live even when CardService is down:
+
+```powershell
+Invoke-WebRequest http://localhost:5064/health/live   # still 200 "Healthy" with CardService stopped
+```
+
+**Scope:** liveness only. There is intentionally no `/health/ready` or `/health/startup` (no readiness/dependency probe) at this stage.
+
 ## Tech stack
 
 - .NET 10

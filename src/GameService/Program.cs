@@ -1,4 +1,6 @@
 using GameService;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 using Polly;
@@ -8,6 +10,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
         options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+
+// Liveness health check: "is the process up and able to answer?" Always healthy, tagged
+// "liveness", and deliberately checks NO dependencies — in particular it does NOT call
+// CardService, so GameService stays live even when CardService is down (see ADR 0008).
+builder.Services.AddHealthChecks()
+    .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["liveness"]);
 
 // Central error handling: translate exceptions to our { error, message, traceId } body and the
 // right HTTP status (see CardServiceExceptionHandler + CardServiceErrorMapping). AddProblemDetails
@@ -219,5 +227,12 @@ var app = builder.Build();
 app.UseExceptionHandler();
 
 app.MapControllers();
+
+// GET /health/live -> 200 when the process is up. Liveness only (no /health/startup or
+// /health/ready), no dependency checks, and not behind the resilience pipeline. See ADR 0008.
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("liveness"),
+});
 
 app.Run();
