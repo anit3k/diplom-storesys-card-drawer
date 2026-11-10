@@ -1,38 +1,77 @@
 using CardService;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Serilog;
+using Serilog.Events;
+using Serilog.Formatting.Json;
 
-var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+// Bootstrap logger: logs anything that fails before the host (and the real logger) is built.
+// Replaced by the configured logger once the host starts.
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console(new JsonFormatter(renderMessage: true))
+    .CreateBootstrapLogger();
 
-// Liveness health check: "is the process up and able to answer?" Always healthy, tagged
-// "liveness", and deliberately checks NO dependencies (see ADR 0008). Mapped below.
-builder.Services.AddHealthChecks()
-    .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["liveness"]);
-
-// DI
-builder.Services.AddSingleton<IDeck, Deck>();
-builder.Services.AddScoped<ICardDrawService, CardDrawService>();
-builder.Services.AddSingleton<IEventStore, EventStore>();
-
-// Idempotency: key -> card cache so a retried draw returns the same card and raises no new
-// event. IMemoryCache gives us per-entry expiry; the wrapper must be a singleton so the cache
-// and the per-key locks are shared across requests.
-builder.Services.Configure<IdempotencyOptions>(builder.Configuration.GetSection("Idempotency"));
-builder.Services.AddMemoryCache();
-builder.Services.AddSingleton<IIdempotentCardDraw, IdempotentCardDraw>();
-
-var app = builder.Build();
-
-app.MapControllers();
-
-// GET /health/live -> 200 when the process is up. Liveness only (no /health/startup or
-// /health/ready), and no dependency checks. See ADR 0008.
-app.MapHealthChecks("/health/live", new HealthCheckOptions
+try
 {
-    Predicate = check => check.Tags.Contains("liveness"),
-});
+    var builder = WebApplication.CreateBuilder(args);
 
-app.Run();
+    // Structured JSON logging to the console via Serilog (see ADR 0009). One JSON line per
+    // event with Timestamp, Level, RenderedMessage, and TraceId/SpanId (Serilog takes the
+    // last two from Activity.Current automatically). Minimum levels come from the "Serilog"
+    // config section (Debug in Development, Information otherwise).
+    builder.Services.AddSerilog((services, loggerConfiguration) => loggerConfiguration
+        .ReadFrom.Configuration(builder.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .WriteTo.Console(new JsonFormatter(renderMessage: true)));
+
+    builder.Services.AddControllers()
+        .AddJsonOptions(options =>
+            options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+
+    // Liveness health check: always healthy, tagged "liveness", checks no dependencies. See ADR 0008.
+    builder.Services.AddHealthChecks()
+        .AddCheck("self", () => HealthCheckResult.Healthy(), tags: ["liveness"]);
+
+    // DI
+    builder.Services.AddSingleton<IDeck, Deck>();
+    builder.Services.AddScoped<ICardDrawService, CardDrawService>();
+    builder.Services.AddSingleton<IEventStore, EventStore>();
+
+    // Idempotency: key -> card cache so a retried draw returns the same card and raises no new
+    // event. IMemoryCache gives us per-entry expiry; the wrapper must be a singleton so the cache
+    // and the per-key locks are shared across requests.
+    builder.Services.Configure<IdempotencyOptions>(builder.Configuration.GetSection("Idempotency"));
+    builder.Services.AddMemoryCache();
+    builder.Services.AddSingleton<IIdempotentCardDraw, IdempotentCardDraw>();
+
+    var app = builder.Build();
+
+    // One summary log line per request (method, path without query, status, elapsed ms), instead
+    // of the framework's many per-request lines. /health/live is logged at Debug so it stays quiet.
+    app.UseSerilogRequestLogging(options =>
+    {
+        options.GetLevel = (httpContext, _, exception) =>
+            exception is not null ? LogEventLevel.Error
+            : httpContext.Response.StatusCode >= 500 ? LogEventLevel.Warning
+            : httpContext.Request.Path.StartsWithSegments("/health/live") ? LogEventLevel.Debug
+            : LogEventLevel.Information;
+    });
+
+    app.MapControllers();
+
+    app.MapHealthChecks("/health/live", new HealthCheckOptions
+    {
+        Predicate = check => check.Tags.Contains("liveness"),
+    });
+
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "CardService terminated unexpectedly during startup.");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

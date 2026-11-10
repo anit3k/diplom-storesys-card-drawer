@@ -24,7 +24,7 @@ public class CardServiceExceptionHandler : IExceptionHandler
         // Caller cancellation (the client went away): not an error, send no error body.
         if (exception is OperationCanceledException && httpContext.RequestAborted.IsCancellationRequested)
         {
-            this.logger.LogInformation("Draw request was cancelled by the caller.");
+            this.logger.LogDebug("Draw request was cancelled by the caller.");
             return true;
         }
 

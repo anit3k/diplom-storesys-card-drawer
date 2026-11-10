@@ -163,6 +163,14 @@ Invoke-WebRequest http://localhost:5064/health/live   # still 200 "Healthy" with
 
 **Scope:** liveness only. There is intentionally no `/health/ready` or `/health/startup` (no readiness/dependency probe) at this stage.
 
+## Logging
+
+Both services log **structured JSON** to the console via Serilog — one line per event with `Timestamp`, `Level`, `RenderedMessage`, and `TraceId`/`SpanId`. Each request is summarised in a single line (method, path, status, elapsed ms); `/health/live` logs at Debug to stay quiet.
+
+Levels: minimum **Debug** in Development (`appsettings.Development.json`), **Information** otherwise (`appsettings.json`); noisy framework categories are turned down to Warning. Retries, timeouts and circuit-breaker transitions log at Warning; unexpected errors at Error; startup failures at Fatal. Sensitive data, request bodies/headers and the user-facing error message are never logged.
+
+**Trace id:** the call is correlated with the standard W3C `traceparent` header (handled by ASP.NET and `HttpClient`), so one `TraceId` follows a `/draw` through both services and into the error response's `traceId` — no custom correlation header. See [ADR 0009](docs/adr/0009-structured-logging.md) (logging) and [ADR 0010](docs/adr/0010-trace-context.md) (trace context). A worked log example follows in a later step.
+
 ## Tech stack
 
 - .NET 10
