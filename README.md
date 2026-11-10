@@ -117,6 +117,10 @@ GameService's call to CardService is guarded by an explicit resilience pipeline 
 
 Values can be overridden for tests, e.g. `CardService__Resilience__RetryBaseDelay` / `__UseJitter` (timeouts must be ≥ 10 ms, the Polly floor). See [ADR 0003](docs/adr/0003-card-service-timeouts.md) (timeouts) and [ADR 0004](docs/adr/0004-retry-on-transient-failures.md) (retry); library choice in [ADR 0002](docs/adr/0002-resilience-library-choice.md).
 
+### Idempotency
+
+Because a retry could otherwise draw a second card and raise a second `CardDrawn` event, GameService sends one `Idempotency-Key` (a GUID) per draw — the same key across all retries of that draw. CardService caches key → card (default 5 min, `Idempotency:CacheDuration`): a repeated key returns the same card, raises no new event, and sets `Idempotency-Replayed: true`. No key = unchanged behaviour; an empty or over-128-character key returns `400`. See [ADR 0005](docs/adr/0005-idempotency-key-for-draw.md).
+
 ## Tech stack
 
 - .NET 10

@@ -47,6 +47,24 @@ Joker — a joker has no suit and no rank, so both are `null` and `isJoker` is `
 }
 ```
 
+**Idempotency (optional) — request header `Idempotency-Key`**
+
+A caller (e.g. GameService, which may retry a draw) may send an `Idempotency-Key` request
+header. When present and valid, the first request for a given key draws a card, caches the
+key → card mapping (default 5 minutes), and returns the card; any later request with the
+**same** key returns the **same** card and raises **no** new `CardDrawn` event. A replayed
+response carries the header `Idempotency-Replayed: true`.
+
+- Without the header, the endpoint behaves exactly as above (a fresh draw and a new event) —
+  the header is backward compatible.
+- The key must be non-empty and at most **128 characters**. An empty or too-long key is
+  rejected with `400 Bad Request` and the shared error shape below
+  (`error: "invalid_idempotency_key"`).
+
+The draw stays a `GET` (the contract is unchanged); the idempotency key makes the retry of a
+side-effecting `GET` safe without switching to `POST`. See
+[ADR 0005](adr/0005-idempotency-key-for-draw.md).
+
 ## GameService
 
 GameService is the client-facing service. It calls CardService and returns the drawn card.

@@ -4,7 +4,7 @@ namespace GameService;
 
 /// <summary>
 /// Typed HttpClient for CardService. The base URL comes from configuration (CardService:BaseUrl),
-/// wired up in Program.cs. No resilience (timeout/retry/circuit breaker) yet — happy path only.
+/// and the resilience pipeline (timeout + retry) is wired up in Program.cs.
 /// </summary>
 public class CardServiceClient : ICardServiceClient
 {
@@ -15,8 +15,16 @@ public class CardServiceClient : ICardServiceClient
         this.httpClient = httpClient;
     }
 
-    public async Task<Card?> GetRandomCardAsync()
+    public async Task<Card?> GetRandomCardAsync(string idempotencyKey)
     {
-        return await this.httpClient.GetFromJsonAsync<Card>("cards/random");
+        // Build the request ourselves so we can attach the idempotency key header. The same
+        // HttpRequestMessage instance is re-sent by the resilience pipeline on each retry, so
+        // every attempt of this draw carries the SAME key (verified against the fake service).
+        using var request = new HttpRequestMessage(HttpMethod.Get, "cards/random");
+        request.Headers.Add("Idempotency-Key", idempotencyKey);
+
+        using var response = await this.httpClient.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<Card>();
     }
 }
