@@ -37,6 +37,9 @@ try
     builder.Services.AddSingleton<IDeck, Deck>();
     builder.Services.AddScoped<ICardDrawService, CardDrawService>();
     builder.Services.AddSingleton<IEventStore, EventStore>();
+    // Randomness behind an abstraction so tests can inject a deterministic source; production
+    // uses Random.Shared via SharedRandomSource.
+    builder.Services.AddSingleton<IRandomSource, SharedRandomSource>();
 
     // Idempotency: key -> card cache so a retried draw returns the same card and raises no new
     // event. IMemoryCache gives us per-entry expiry; the wrapper must be a singleton so the cache
@@ -67,7 +70,9 @@ try
 
     app.Run();
 }
-catch (Exception ex)
+// HostAbortedException is how WebApplicationFactory (tests) stops the host after capturing it;
+// it must propagate, not be logged as a fatal startup error.
+catch (Exception ex) when (ex is not HostAbortedException)
 {
     Log.Fatal(ex, "CardService terminated unexpectedly during startup.");
 }
@@ -75,3 +80,7 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+// Exposed so Microsoft.AspNetCore.Mvc.Testing's WebApplicationFactory<Program> can boot the host
+// in-process for tests.
+public partial class Program;

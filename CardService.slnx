@@ -3,4 +3,7 @@
     <Project Path="src/CardService/CardService.csproj" />
     <Project Path="src/GameService/GameService.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CardService.UnitTests/CardService.UnitTests.csproj" />
+  </Folder>
 </Solution>

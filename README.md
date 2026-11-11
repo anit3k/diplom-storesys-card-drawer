@@ -193,6 +193,20 @@ dotnet run --project src\GameService  > game.log 2>&1   # terminal 2
 Select-String -Path card.log,game.log -Pattern '<trace-id>'
 ```
 
+## Running the tests
+
+Run the whole suite from the repository root (PowerShell 7):
+
+```powershell
+dotnet test
+```
+
+Tests live under `tests/`:
+
+- **`CardService.UnitTests`** — in-process tests for CardService using xUnit and `Microsoft.AspNetCore.Mvc.Testing` (`WebApplicationFactory<Program>`), with hand-made fakes (no mocking/assertion libraries). They cover the deck, the draw's uniform index selection, the `GET /cards/random` shape (ordinary card and joker), idempotency, concurrency, the trace id on the `CardDrawn` event, and `GET /health/live`. Randomness is injected so the tests are deterministic, and each test boots its own host, so runs are repeatable. See [ADR 0011](docs/adr/0011-test-strategy.md).
+
+GameService's service-level tests are added in a later step.
+
 ## Tech stack
 
 - .NET 10
