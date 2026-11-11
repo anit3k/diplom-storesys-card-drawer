@@ -75,6 +75,7 @@ try
 catch (Exception ex) when (ex is not HostAbortedException)
 {
     Log.Fatal(ex, "CardService terminated unexpectedly during startup.");
+    throw; // fail fast: a fatal startup failure must crash (non-zero exit), not exit 0.
 }
 finally
 {

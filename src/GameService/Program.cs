@@ -283,11 +283,18 @@ try
 
     app.Run();
 }
-catch (Exception ex)
+// HostAbortedException is how WebApplicationFactory (tests) stops the host after capturing it;
+// it must propagate, not be logged as a fatal startup error.
+catch (Exception ex) when (ex is not HostAbortedException)
 {
     Log.Fatal(ex, "GameService terminated unexpectedly during startup.");
+    throw; // fail fast: a fatal startup failure must crash (non-zero exit), not exit 0.
 }
 finally
 {
     Log.CloseAndFlush();
 }
+
+// Exposed so Microsoft.AspNetCore.Mvc.Testing's WebApplicationFactory<Program> can boot the host
+// in-process for tests.
+public partial class Program;

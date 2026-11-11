@@ -201,11 +201,12 @@ Run the whole suite from the repository root (PowerShell 7):
 dotnet test
 ```
 
-Tests live under `tests/`:
+Tests live under `tests/` (xUnit + `Microsoft.AspNetCore.Mvc.Testing`, hand-made fakes, no mocking/assertion libraries; each test boots its own host):
 
-- **`CardService.UnitTests`** — in-process tests for CardService using xUnit and `Microsoft.AspNetCore.Mvc.Testing` (`WebApplicationFactory<Program>`), with hand-made fakes (no mocking/assertion libraries). They cover the deck, the draw's uniform index selection, the `GET /cards/random` shape (ordinary card and joker), idempotency, concurrency, the trace id on the `CardDrawn` event, and `GET /health/live`. Randomness is injected so the tests are deterministic, and each test boots its own host, so runs are repeatable. See [ADR 0011](docs/adr/0011-test-strategy.md).
+- **`CardService.UnitTests`** — in-process tests covering the deck, the draw's uniform index selection, the `GET /cards/random` shape (ordinary card and joker), idempotency, concurrency, the trace id on the `CardDrawn` event, and `GET /health/live`. Randomness is injected so the tests are deterministic.
+- **`GameService.UnitTests`** — in-process tests that run the real resilience pipeline (timeout, retry, circuit breaker) against a hand-made `ScriptedHttpMessageHandler` standing in for CardService (only the typed client's primary handler is swapped). They cover error mapping, the client's exception translation, options validation, and the `/draw` endpoint: success, retry on transient statuses, no retry on 500/4xx, exhausted retries, timeout, the idempotency key being constant across retries and distinct across draws, that error bodies leak no internal detail, and `/health/live`. Small real timeout values with large margins keep it fast and stable (no fake clock).
 
-GameService's service-level tests are added in a later step.
+See [ADR 0011](docs/adr/0011-test-strategy.md). GameService's service-level tests (real HTTP mock) and the circuit-breaker scenarios come in a later step.
 
 ## Tech stack
 

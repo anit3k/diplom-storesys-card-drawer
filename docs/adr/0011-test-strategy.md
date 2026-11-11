@@ -65,6 +65,29 @@ service exercised over real HTTP against mocked collaborators).
   entry point exited without ever building an IHost". Sequential execution makes the small suite
   deterministic.
 
+### GameService unit tests (del 2)
+
+`tests/GameService.UnitTests` tests the **whole pipeline in-process** with a hand-made primary
+HTTP handler standing in for CardService:
+
+- `WebApplicationFactory<Program>` boots the real GameService; in `ConfigureTestServices` we
+  re-configure the existing typed client and swap **only its primary handler**
+  (`AddHttpClient<ICardServiceClient, CardServiceClient>().ConfigurePrimaryHttpMessageHandler(...)`,
+  last registration wins). So the real total timeout, retry, circuit breaker, per-attempt
+  timeout, the client's exception translation and the central error handler all run unchanged;
+  only the network is faked. (Verified: the scripted handler receives exactly the calls the
+  pipeline makes.)
+- `ScriptedHttpMessageHandler` plays a queue of actions (status/body, throw, delay that respects
+  the `CancellationToken`) and records each call (method, URI, `Idempotency-Key`, `traceparent`).
+- This covers many cases fast and deterministically: the error-mapping function (pure), the
+  client translation, options validation, and the `/draw` endpoint (success, retry on each
+  transient status, no-retry on 500/4xx, exhausted retries, network failure, timeout, idempotency
+  key constant across retries and distinct across draws, no internal detail in the error body,
+  and `/health/live` without touching CardService).
+- **Service-level tests** for GameService — one whole service over **real HTTP** against a mocked
+  CardService, for the few most important scenarios (the success path and the most important
+  failures, as the book advises) — and the circuit-breaker scenarios come in del 3.
+
 ### Minimal production changes for testability
 
 Kept as small as possible and listed here:
@@ -72,10 +95,17 @@ Kept as small as possible and listed here:
 1. **Injectable randomness.** New `IRandomSource` (+ `SharedRandomSource` using `Random.Shared`),
    registered in DI; `CardDrawService` takes `IRandomSource` instead of calling `Random.Shared`
    directly. Production behaviour is unchanged.
-2. **`public partial class Program`** in CardService, so `WebApplicationFactory<Program>` can
-   reference the entry point.
+2. **`public partial class Program`** in CardService and GameService, so
+   `WebApplicationFactory<Program>` can reference each entry point.
 3. **Bootstrap `catch` filter** `when (ex is not HostAbortedException)`, so the host-stop signal
-   used by the test host propagates instead of being logged as a fatal startup error.
+   the test host uses propagates instead of being logged as a fatal startup error.
+4. **Bootstrap `catch` now rethrows after logging Fatal.** Writing the options-validation tests
+   showed the bootstrap `catch` previously logged a fatal startup failure (e.g. an invalid
+   `CardService:Resilience` value caught by `ValidateOnStart`) but then let the process exit with
+   code 0 — so a misconfiguration looked like a clean start, and tests saw an `ObjectDisposedException`
+   instead of the validation message. Adding `throw;` after `Log.Fatal` makes startup fail fast
+   (non-zero exit), matching this ADR's and ADR 0009's intent ("Fatal: the service cannot start or
+   crashes"), and lets the validation message surface to a caller/test. Applied to both services.
 
 ## Consequences
 
@@ -84,10 +114,22 @@ Kept as small as possible and listed here:
   event count, 400 on an invalid key), concurrency (one event under 20 concurrent same-key
   calls), the trace id on the event, and `GET /health/live`. All 16 tests pass, and 10
   consecutive runs gave the identical result.
-- The test project adds test-only dependencies (`Microsoft.NET.Test.Sdk`, xUnit,
-  `Microsoft.AspNetCore.Mvc.Testing`) and three minimal, documented production changes.
-- GameService's service-level tests (mocked CardService over real HTTP) and the corresponding
-  part of this strategy are deferred to the next steps.
+- GameService has in-process tests that exercise the real resilience pipeline against a scripted
+  handler: error mapping, client translation, options validation, and the full `/draw` behaviour
+  (retry/no-retry per status, timeout, idempotency, no detail leak, health). 39 tests pass, and 10
+  consecutive runs were identical (~2.7 s wall each).
+- The test projects add test-only dependencies (`Microsoft.NET.Test.Sdk`, xUnit,
+  `Microsoft.AspNetCore.Mvc.Testing`) and the minimal, documented production changes above.
+- **Real time with small values, not a fake clock.** The GameService tests use the real pipeline
+  with short durations (100 ms attempt, 1 s total, 10 ms back-off, jitter off) and fake-handler
+  delays set to ~5× the timeout, so timeouts/retries fire for real while the suite stays fast and
+  the assertions keep a large margin (and never check an exact duration). The trade-off: we accept
+  a small real-time cost and tune for margin, rather than injecting a fake `TimeProvider`. A fake
+  clock would remove the wall-clock time but add complexity and its own wiring; with big margins the
+  real-time approach is simpler and has proven stable over the 10 runs. (A fake `TimeProvider` could
+  be revisited if these ever become slow or flaky.)
+- Service-level tests for GameService (mocked CardService over real HTTP) and the circuit-breaker
+  scenarios are deferred to del 3.
 
 ## Book reference
 
