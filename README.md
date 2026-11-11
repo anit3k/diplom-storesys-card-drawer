@@ -205,8 +205,65 @@ Tests live under `tests/` (xUnit + `Microsoft.AspNetCore.Mvc.Testing`, hand-made
 
 - **`CardService.UnitTests`** — in-process tests covering the deck, the draw's uniform index selection, the `GET /cards/random` shape (ordinary card and joker), idempotency, concurrency, the trace id on the `CardDrawn` event, and `GET /health/live`. Randomness is injected so the tests are deterministic.
 - **`GameService.UnitTests`** — in-process tests that run the real resilience pipeline (timeout, retry, circuit breaker) against a hand-made `ScriptedHttpMessageHandler` standing in for CardService (only the typed client's primary handler is swapped). They cover error mapping, the client's exception translation, options validation, and the `/draw` endpoint: success, retry on transient statuses, no retry on 500/4xx, exhausted retries, timeout, the idempotency key being constant across retries and distinct across draws, that error bodies leak no internal detail, and `/health/live`. Small real timeout values with large margins keep it fast and stable (no fake clock).
+- **`GameService.ServiceTests`** — service-level tests: GameService over **real HTTP** against a hand-made Kestrel mock of CardService (`MockCardService`), with the real pipeline unchanged. They cover the success path (incl. trace propagation), a slow service (504), transient recovery, the circuit breaker opening/closing/reopening, 4xx not opening it, and an unreachable CardService. Breaker transitions are awaited by polling (no sleeps).
 
-See [ADR 0011](docs/adr/0011-test-strategy.md). GameService's service-level tests (real HTTP mock) and the circuit-breaker scenarios come in a later step.
+See [ADR 0011](docs/adr/0011-test-strategy.md).
+
+## Testing slow responses and an unavailable CardService
+
+### Automated
+
+These service-level tests in `GameService.ServiceTests` drive the situations with a Kestrel mock of CardService (the mock produces the slow/failing/missing responses):
+
+| Requirement | Test |
+|---|---|
+| Slow response → timeout | `TimeoutAndRetryTests.Draw_MockSlow_Returns504AfterRetriesAndWellBeforeThreeDelays` |
+| Temporary failures → recover | `TimeoutAndRetryTests.Draw_TransientFailuresThenSuccess_Returns200With3CallsSharingOneIdempotencyKey` |
+| Unavailable CardService | `UnavailableCardServiceTests.Draw_CardServiceNotListening_ReturnsServerErrorQuicklyWithoutHanging` |
+
+(The circuit breaker is covered by `CircuitBreakerTests`.)
+
+### Manual (PowerShell 7)
+
+Ports come from `launchSettings.json`: CardService `http://localhost:5054`, GameService `http://localhost:5064`.
+
+**(a) Unavailable CardService.** Start both services, stop CardService, then call GameService:
+
+```powershell
+Invoke-WebRequest http://localhost:5064/draw -UseBasicParsing
+```
+
+GameService fails promptly (it does not hang) with a 5xx error. On this machine it returns **504** `card_service_timeout` (~2 s) rather than 503: a refused loopback connection is reported slowly by the OS — slower than the 500 ms attempt timeout — so the attempt timeout fires first. Actual response:
+
+```json
+{
+  "error": "card_service_timeout",
+  "message": "Kortservicen svarede ikke i tide. Prøv igen om lidt.",
+  "traceId": "89b63819ac11e9fe9e2a56b3220ad9d9"
+}
+```
+
+**(b) Slow response via a low attempt timeout.** Note: an attempt timeout below **10 ms** is invalid (Polly's timeout floor), so `00:00:00.001` does **not** produce a 504 — the pipeline fails to build and the call returns `500 internal_error`:
+
+```powershell
+$env:CardService__Resilience__AttemptTimeout = "00:00:00.001"
+dotnet run --project src\GameService    # then: Invoke-WebRequest http://localhost:5064/draw -UseBasicParsing
+Remove-Item Env:\CardService__Resilience__AttemptTimeout   # remove the override afterwards
+```
+
+```json
+{ "error": "internal_error", "message": "Der opstod en uventet fejl.", "traceId": "719d6c63ff13692d5c62beea61795578" }
+```
+
+The lowest valid attempt timeout (10 ms) is still above CardService's ~1 ms warm response, so lowering the timeout can't reliably force a 504 against the real (fast) service. The deterministic 504 demonstration is the automated `Draw_MockSlow…` test, where the mock delays ~500 ms.
+
+### Requirement → where tested
+
+| Requirement | Covered by |
+|---|---|
+| Slow response is handled (timeout, not a hang) | `Draw_MockSlow_Returns504AfterRetriesAndWellBeforeThreeDelays` + manual (a) |
+| Temporary failures recover (retry) | `Draw_TransientFailuresThenSuccess…` (+ `GameService.UnitTests` retry theories) |
+| Unavailable CardService returns a clean error | `Draw_CardServiceNotListening_ReturnsServerErrorQuicklyWithoutHanging` + manual (a) |
 
 ## Tech stack
 

@@ -5,6 +5,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/CardService.UnitTests/CardService.UnitTests.csproj" />
+    <Project Path="tests/GameService.ServiceTests/GameService.ServiceTests.csproj" />
     <Project Path="tests/GameService.UnitTests/GameService.UnitTests.csproj" />
   </Folder>
 </Solution>

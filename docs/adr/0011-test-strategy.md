@@ -86,7 +86,38 @@ HTTP handler standing in for CardService:
   and `/health/live` without touching CardService).
 - **Service-level tests** for GameService — one whole service over **real HTTP** against a mocked
   CardService, for the few most important scenarios (the success path and the most important
-  failures, as the book advises) — and the circuit-breaker scenarios come in del 3.
+  failures, as the book advises) — are added in del 3 (below).
+
+### GameService service-level tests (del 3)
+
+`tests/GameService.ServiceTests` tests GameService as a whole over **real HTTP** against a
+*microservice mock* of CardService (book, ch. 8):
+
+- `MockCardService` is a hand-made **real Kestrel** minimal-API server on an ephemeral loopback
+  port (`http://127.0.0.1:0`; the bound address is read after start). It serves `GET /cards/random`
+  per the contract, its per-call behaviour is scriptable and reprogrammable mid-test (e.g. fail then
+  recover), and it records every call (path, `Idempotency-Key`, `traceparent`) thread-safely.
+- GameService runs via `WebApplicationFactory<Program>` with its **real HTTP pipeline unchanged**
+  (no handler is replaced this time); only `CardService:BaseUrl` points at the mock. So the test
+  exercises the genuine network path, resilience pipeline, client translation and error handling.
+- Following the book, service tests cover only the **most important scenarios** (not every variant —
+  those are the del-2 unit tests): the success path (incl. trace-context propagation to the mock),
+  a slow service (504), transient failures that recover (one idempotency key across the retries),
+  the **circuit breaker** opening after the expected number of failed calls and rejecting without
+  hitting the mock, closing again after the break, a failed trial re-opening it, 4xx never opening
+  it, and an unreachable CardService.
+- **No sleeps:** waiting on breaker transitions uses a small `WaitUntilAsync(condition, timeout)`
+  polling helper, not fixed delays. **No randomness:** the mock decides the card.
+- **Isolation:** each test gets its own mock (own port) and its own GameService host, so they are
+  independent. In principle they could run in parallel; in practice parallel
+  `WebApplicationFactory<Program>` starts collide on the process-wide top-level-`Program` host
+  resolver (the same flakiness as the unit assemblies), so the assembly runs **sequentially**.
+  Concurrency under load is instead checked by running this assembly alongside another test run (a
+  separate process), which stresses the timing margins without that in-process collision.
+- **"Unavailable" uses a freed port:** the test starts the mock to get a real loopback address, then
+  stops it so nothing listens. Risk: in principle the OS could hand that port to something else
+  before the test connects; in practice, within one test on loopback this does not happen, and the
+  assertion is deliberately robust (a prompt 5xx that does not hang). Acceptable for this suite.
 
 ### Minimal production changes for testability
 
@@ -128,8 +159,18 @@ Kept as small as possible and listed here:
   clock would remove the wall-clock time but add complexity and its own wiring; with big margins the
   real-time approach is simpler and has proven stable over the 10 runs. (A fake `TimeProvider` could
   be revisited if these ever become slow or flaky.)
-- Service-level tests for GameService (mocked CardService over real HTTP) and the circuit-breaker
-  scenarios are deferred to del 3.
+- GameService also has service-level tests over real HTTP against a Kestrel mock of CardService,
+  covering the success path, timeout, transient recovery, the circuit breaker (open/close/reopen),
+  4xx-does-not-open, and an unreachable service. The same real-time-with-margins approach is used
+  (100 ms attempt / 1 s total / 1 s break, mock delays ~5× the timeout, breaker thresholds hit with
+  small call counts) and breaker transitions are awaited by polling, not sleeping. 10 tests pass; 10
+  consecutive runs were identical (~5.3 s wall each) and held under concurrent load.
+- **"Unavailable CardService" surfaces as a timeout, not a refusal, on this machine.** A refused
+  loopback connection is reported slowly by the OS (observed ~2 s), which is longer than the attempt
+  timeout, so a stopped CardService yields `504 card_service_timeout` rather than `503
+  card_service_unavailable`. The mapping is correct (`HttpRequestException` → unavailable); which
+  bucket a refusal lands in is a timeout-tuning matter, so the service test asserts a prompt 5xx
+  (503 or 504) that does not hang rather than a specific code.
 
 ## Book reference
 
