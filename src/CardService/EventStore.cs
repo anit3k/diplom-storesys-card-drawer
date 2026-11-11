@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace CardService;
 
 public class EventStore : IEventStore
@@ -8,10 +10,14 @@ public class EventStore : IEventStore
 
     public void Raise(string eventName, object content)
     {
+        // Capture the trace id at the moment the event is raised, so the feed shows which
+        // request caused it. Null when there is no active Activity.
+        var traceId = Activity.Current?.TraceId.ToString();
+
         lock (this.lockObj)
         {
             this.sequenceNumber++;
-            this.events.Add(new Event(this.sequenceNumber, DateTimeOffset.UtcNow, eventName, content));
+            this.events.Add(new Event(this.sequenceNumber, DateTimeOffset.UtcNow, eventName, content, traceId));
         }
     }
 

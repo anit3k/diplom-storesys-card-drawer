@@ -65,6 +65,37 @@ The draw stays a `GET` (the contract is unchanged); the idempotency key makes th
 side-effecting `GET` safe without switching to `POST`. See
 [ADR 0005](adr/0005-idempotency-key-for-draw.md).
 
+### `GET /events`
+
+Returns the `CardDrawn` events raised by CardService, filtered by a sequence-number range via
+the query parameters `start` and `end` (both optional). Every draw that actually runs raises one
+event; an idempotency replay raises none.
+
+**Success response — `200 OK`** — a JSON array of events, each:
+
+| Field            | Type             | Description                                                      |
+|------------------|------------------|------------------------------------------------------------------|
+| `sequenceNumber` | number           | Monotonic position in the feed                                   |
+| `occurredAt`     | string (ISO-8601)| When the event was raised                                        |
+| `name`           | string           | Event name, e.g. `CardDrawn`                                     |
+| `content`        | object           | Event payload — for `CardDrawn`, the drawn card                 |
+| `traceId`        | string or `null` | W3C trace id of the request that caused the event; `null` if none |
+
+```json
+[
+  {
+    "sequenceNumber": 1,
+    "occurredAt": "2026-11-10T16:40:00.0000000+00:00",
+    "name": "CardDrawn",
+    "content": { "suit": "Hearts", "rank": "Queen", "isJoker": false },
+    "traceId": "11112222333344445555666677778888"
+  }
+]
+```
+
+The `traceId` lets you tie an event back to the request (and its log lines) that produced it.
+See [ADR 0010](adr/0010-trace-context.md).
+
 ## GameService
 
 GameService is the client-facing service. It calls CardService and returns the drawn card.

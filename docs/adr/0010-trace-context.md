@@ -67,6 +67,10 @@ part 2, a later step.)
   later observability step, not this one.
 - **No new dependency** for correlation; it is a property of the platform plus Serilog's
   automatic capture.
+- **Trace id stored on events.** CardService's `CardDrawn` event carries a `TraceId`, captured
+  from `Activity.Current` when the event is raised, so a reader of `GET /events` can tie an event
+  back to the request (and its log lines) that caused it. An idempotency replay raises no event,
+  so it never changes an existing event's trace id. (The `traceId` field is in the api-contract.)
 
 ## Book reference
 

@@ -81,7 +81,7 @@
             }
           ]
         },
-        "description": "Returns CardDrawn events raised by CardService, filtered by sequence number range."
+        "description": "Returns CardDrawn events raised by CardService, filtered by sequence number range. Each event has sequenceNumber, occurredAt, name, content, and traceId (the W3C trace id of the request that caused it, or null if none)."
       },
       "response": []
     }

@@ -26,7 +26,7 @@ src/
 │   ├── ICardDrawService.cs       interface for drawing a card
 │   ├── CardDrawService.cs        draws a uniformly random card, raises a CardDrawn event
 │   ├── CardsController.cs        HTTP endpoint (GET /cards/random)
-│   ├── Event.cs                  event feed model (SequenceNumber, OccurredAt, Name, Content)
+│   ├── Event.cs                  event feed model (SequenceNumber, OccurredAt, Name, Content, TraceId)
 │   ├── IEventStore.cs            interface for raising/reading events
 │   ├── EventStore.cs             in-memory event store implementation
 │   ├── EventFeedController.cs    HTTP endpoint (GET /events)
@@ -169,7 +169,29 @@ Both services log **structured JSON** to the console via Serilog — one line pe
 
 Levels: minimum **Debug** in Development (`appsettings.Development.json`), **Information** otherwise (`appsettings.json`); noisy framework categories are turned down to Warning. Retries, timeouts and circuit-breaker transitions log at Warning; unexpected errors at Error; startup failures at Fatal. Sensitive data, request bodies/headers and the user-facing error message are never logged.
 
-**Trace id:** the call is correlated with the standard W3C `traceparent` header (handled by ASP.NET and `HttpClient`), so one `TraceId` follows a `/draw` through both services and into the error response's `traceId` — no custom correlation header. See [ADR 0009](docs/adr/0009-structured-logging.md) (logging) and [ADR 0010](docs/adr/0010-trace-context.md) (trace context). A worked log example follows in a later step.
+**Trace id:** the call is correlated with the standard W3C `traceparent` header (handled by ASP.NET and `HttpClient`), so one `TraceId` follows a `/draw` through both services, into CardService's `CardDrawn` event (its `traceId` field), and into the error response's `traceId` — no custom correlation header. See [ADR 0009](docs/adr/0009-structured-logging.md) (logging) and [ADR 0010](docs/adr/0010-trace-context.md) (trace context).
+
+### Example: one trace across both services
+
+A `/draw` called with `traceparent: 00-aaaabbbbccccddddeeeeffff00001111-...-01`. Two log lines from the same run — GameService's outgoing call and CardService's summary of the incoming call — share the same `TraceId` (lines shortened: framework fields like `EventId`, `RequestId`, `ConnectionId`, `Scope` removed):
+
+```json
+// GameService — outgoing call to CardService
+{"Timestamp":"2026-11-10T17:44:51.6443293+01:00","Level":"Information","RenderedMessage":"Sending HTTP request \"GET\" \"http://localhost:5054/cards/random\"","TraceId":"aaaabbbbccccddddeeeeffff00001111","SpanId":"e4bd7498f70b9600","Properties":{"SourceContext":"System.Net.Http.HttpClient.ICardServiceClient.ClientHandler"}}
+```
+
+```json
+// CardService — summary of the incoming request
+{"Timestamp":"2026-11-10T17:44:51.7157844+01:00","Level":"Information","RenderedMessage":"HTTP \"GET\" \"/cards/random\" responded 200 in 26.1170 ms","TraceId":"aaaabbbbccccddddeeeeffff00001111","SpanId":"72c5c8c0895c6040","Properties":{"SourceContext":"Serilog.AspNetCore.RequestLoggingMiddleware","StatusCode":200,"Elapsed":26.117}}
+```
+
+The same `traceId` is also on the `CardDrawn` event in `GET /events`. To follow one trace across both services, filter each service's log on the trace id. For example, if each service's console output is redirected to a file:
+
+```powershell
+dotnet run --project src\CardService  > card.log 2>&1   # terminal 1
+dotnet run --project src\GameService  > game.log 2>&1   # terminal 2
+Select-String -Path card.log,game.log -Pattern '<trace-id>'
+```
 
 ## Tech stack
 
@@ -209,6 +231,7 @@ classDiagram
     +DateTimeOffset OccurredAt
     +string Name
     +object Content
+    +string? TraceId
   }
   class IEventStore {
     <<interface>>
