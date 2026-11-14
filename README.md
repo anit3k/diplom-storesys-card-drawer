@@ -7,41 +7,67 @@ A small two-microservice system for drawing playing cards. Built for the "Udvikl
 
 ## Assignment
 
-The system exposes HTTP endpoints that return a randomly drawn card as JSON, with equal probability for every card in the deck. CardService owns the deck and the draw; GameService is the client-facing service that calls CardService.
+Two microservices that draw a playing card. **CardService** owns the deck and the draw (52 cards + 3 jokers, equal probability) and exposes it as JSON; **GameService** is the client-facing service that calls CardService over HTTP with timeout/retry/circuit-breaker resilience, idempotency, structured logging and a health endpoint. The focus is robust service-to-service communication, testing, and logging.
+
+Where each assignment requirement is addressed:
+
+| Requirement | Where |
+|---|---|
+| (a) Start both services and draw a card | [Running locally](#running-locally) |
+| (b) Run the tests | [Running the tests](#running-the-tests) |
+| (c) Timeout / retry / circuit-breaker choices | [Resilience](#resilience); ADRs [0002](docs/adr/0002-resilience-library-choice.md)–[0006](docs/adr/0006-circuit-breaker.md) |
+| (d) Slow responses and an unavailable CardService | [Testing slow responses and an unavailable CardService](#testing-slow-responses-and-an-unavailable-cardservice); `GameService.ServiceTests` |
+| (e) Health endpoints | [Health endpoints](#health-endpoints); ADR [0008](docs/adr/0008-liveness-health-endpoint.md) |
+| (f) Log example with one trace id across both services | [Logging](#logging) (Example); ADRs [0009](docs/adr/0009-structured-logging.md), [0010](docs/adr/0010-trace-context.md) |
+| (g) What works / known limitations | [Scope and known limitations](#scope-and-known-limitations) |
 
 ## Architecture
 
 The services follow the flat project structure used in chapter 2 of the book (see the [`book-reference/flat-structure`](https://github.com/anit3k/diplom-storesys-shopping-cart/tree/book-reference/flat-structure) branch of [diplom-storesys-shopping-cart](https://github.com/anit3k/diplom-storesys-shopping-cart) for the reference implementation), rather than a layered Clean Architecture split.
 
 - **CardService**: generates the full 55-card deck locally in code (`IDeck` / `Deck`) — no external dependency — then draws one card uniformly at random via `CardDrawService` / `ICardDrawService`, and returns it through its HTTP endpoint (`CardsController`, `GET /cards/random`). See [ADR 0001](docs/adr/0001-generate-deck-locally.md) for why the deck is local.
-- **GameService**: an ASP.NET Core Web API that will call CardService through a typed `HttpClient` and expose its own draw endpoint. (Endpoint and typed client are added in the next steps.)
-- **Event store** (CardService): an in-memory `IEventStore` / `EventStore`, following the book's chapter 2 event feed pattern — every card draw raises a `CardDrawn` event, exposed to other microservices via a `GET /events` endpoint on `EventFeedController`.
+- **GameService**: an ASP.NET Core Web API that calls CardService through a typed `HttpClient` (`ICardServiceClient` / `CardServiceClient`) and exposes `GET /draw`. The outgoing call runs through an explicit resilience pipeline (total timeout → retry → circuit breaker → per-attempt timeout; ADRs [0002](docs/adr/0002-resilience-library-choice.md)–[0006](docs/adr/0006-circuit-breaker.md)); the client translates failures into a `CardServiceException` that a central `IExceptionHandler` maps to a JSON error response (ADR [0007](docs/adr/0007-error-responses.md)). It also has a `/health/live` endpoint (ADR [0008](docs/adr/0008-liveness-health-endpoint.md)) and structured JSON logging with trace propagation (ADRs [0009](docs/adr/0009-structured-logging.md)–[0010](docs/adr/0010-trace-context.md)).
+- **Idempotency** (CardService): each `/draw` carries an `Idempotency-Key`; CardService caches key → card so a retried draw returns the same card without a second event (ADR [0005](docs/adr/0005-idempotency-key-for-draw.md)).
+- **Event store** (CardService): an in-memory `IEventStore` / `EventStore`, following the book's chapter 2 event feed pattern — every card draw raises a `CardDrawn` event (with the request's trace id), exposed to other microservices via a `GET /events` endpoint on `EventFeedController`.
 
 ```
 src/
 ├── CardService/
-│   ├── Card.cs                  domain model (Suit, Rank, IsJoker)
-│   ├── IDeck.cs                  interface for the full deck
-│   ├── Deck.cs                   locally generated 55-card deck
-│   ├── ICardDrawService.cs       interface for drawing a card
-│   ├── CardDrawService.cs        draws a uniformly random card, raises a CardDrawn event
-│   ├── CardsController.cs        HTTP endpoint (GET /cards/random)
-│   ├── Event.cs                  event feed model (SequenceNumber, OccurredAt, Name, Content, TraceId)
-│   ├── IEventStore.cs            interface for raising/reading events
-│   ├── EventStore.cs             in-memory event store implementation
-│   ├── EventFeedController.cs    HTTP endpoint (GET /events)
-│   ├── Program.cs
-│   ├── appsettings.json
+│   ├── Card.cs                        domain model (Suit, Rank, IsJoker)
+│   ├── IDeck.cs / Deck.cs             interface + locally generated 55-card deck
+│   ├── ICardDrawService.cs / CardDrawService.cs   draws a random card, raises a CardDrawn event
+│   ├── IRandomSource.cs               injectable randomness (SharedRandomSource uses Random.Shared)
+│   ├── IIdempotentCardDraw.cs / IdempotentCardDraw.cs / IdempotencyOptions.cs   idempotent draw cache
+│   ├── CardsController.cs             HTTP endpoint (GET /cards/random), Idempotency-Key handling
+│   ├── Event.cs                       event feed model (SequenceNumber, OccurredAt, Name, Content, TraceId)
+│   ├── IEventStore.cs / EventStore.cs in-memory event store
+│   ├── EventFeedController.cs         HTTP endpoint (GET /events)
+│   ├── ErrorResponse.cs               shared { error, message, traceId } shape
+│   ├── Program.cs                     DI, Serilog, health, idempotency wiring
+│   ├── appsettings.json / appsettings.Development.json / Properties/launchSettings.json
 │   └── CardService.csproj
 └── GameService/
-    ├── Card.cs                   card DTO for deserializing CardService's response
-    ├── CardServiceOptions.cs     options bound from CardService:BaseUrl
-    ├── ICardServiceClient.cs     interface for the CardService client
-    ├── CardServiceClient.cs      typed HttpClient that calls CardService
-    ├── DrawController.cs         HTTP endpoint (GET /draw)
-    ├── Program.cs
-    ├── appsettings.json
+    ├── Card.cs                        card DTO for deserializing CardService's response
+    ├── CardServiceOptions.cs          CardService:BaseUrl
+    ├── CardServiceResilienceOptions.cs   timeout/retry/breaker settings + startup validation
+    ├── ICardServiceClient.cs / CardServiceClient.cs   typed HttpClient; translates failures
+    ├── CardServiceException.cs        failure cause (Timeout/Unavailable/CircuitOpen/BadResponse)
+    ├── CardServiceErrorMapping.cs     pure cause -> (status, error, message)
+    ├── CardServiceExceptionHandler.cs central IExceptionHandler
+    ├── ErrorResponse.cs               { error, message, traceId }
+    ├── DrawController.cs               HTTP endpoint (GET /draw)
+    ├── Program.cs                     typed client + resilience pipeline, Serilog, health
+    ├── appsettings.json / appsettings.Development.json / Properties/launchSettings.json
     └── GameService.csproj
+
+tests/
+├── CardService.UnitTests/     in-process unit tests (deck, draw, endpoint, idempotency, health)
+├── GameService.UnitTests/     pipeline tests with a scripted primary handler
+└── GameService.ServiceTests/  service-level tests over real HTTP against a Kestrel mock
+
+docs/
+├── api-contract.md            the HTTP contract (requests, responses, errors, events)
+└── adr/                       architecture decision records 0001–0011
 ```
 
 ## Running locally
@@ -265,6 +291,15 @@ The lowest valid attempt timeout (10 ms) is still above CardService's ~1 ms warm
 | Temporary failures recover (retry) | `Draw_TransientFailuresThenSuccess…` (+ `GameService.UnitTests` retry theories) |
 | Unavailable CardService returns a clean error | `Draw_CardServiceNotListening_ReturnsServerErrorQuicklyWithoutHanging` + manual (a) |
 
+## Scope and known limitations
+
+Deliberate boundaries and known constraints of this assignment:
+
+- **Liveness only.** Only `GET /health/live` exists; there is intentionally no readiness or startup probe (ADR [0008](docs/adr/0008-liveness-health-endpoint.md)).
+- **In-memory idempotency cache.** The key → card cache (`IMemoryCache`, default 5 min) lives in the CardService process — not shared across instances, and lost on restart (ADR [0005](docs/adr/0005-idempotency-key-for-draw.md)).
+- **In-memory event store.** The `CardDrawn` event feed is in-memory (book ch. 2 pattern) and is lost on restart; it is not persisted.
+- **Loopback refusal may surface as 504.** On Windows a refused loopback connection can be reported by the OS more slowly than the per-attempt timeout, so a stopped CardService can produce `504 card_service_timeout` rather than `503 card_service_unavailable` (see the manual test above). The mapping is correct; which 5xx appears is a timeout-tuning matter.
+
 ## Tech stack
 
 - .NET 10
@@ -315,6 +350,13 @@ classDiagram
     +Raise(eventName, content) void
     +GetEvents(first, last) IEnumerable~Event~
   }
+  class IRandomSource {
+    <<interface>>
+    +Next(maxExclusive) int
+  }
+  class SharedRandomSource {
+    +Next(maxExclusive) int
+  }
   class ICardDrawService {
     <<interface>>
     +DrawRandomCard() Card
@@ -322,10 +364,26 @@ classDiagram
   class CardDrawService {
     -IDeck deck
     -IEventStore eventStore
+    -IRandomSource random
     +DrawRandomCard() Card
+  }
+  class IIdempotentCardDraw {
+    <<interface>>
+    +DrawOrReplay(key, draw) Card+replayed
+  }
+  class IdempotentCardDraw {
+    -IMemoryCache cache
+    -IdempotencyOptions options
+    +DrawOrReplay(key, draw) Card+replayed
+  }
+  class IdempotencyOptions {
+    +TimeSpan CacheDuration
+    +int MaxKeyLength
   }
   class CardsController {
     -ICardDrawService cardDrawService
+    -IIdempotentCardDraw idempotentCardDraw
+    -IdempotencyOptions options
     +GetRandomCard() ActionResult~Card~
   }
   class EventFeedController {
@@ -336,9 +394,14 @@ classDiagram
   Deck ..|> IDeck
   EventStore ..|> IEventStore
   CardDrawService ..|> ICardDrawService
+  SharedRandomSource ..|> IRandomSource
+  IdempotentCardDraw ..|> IIdempotentCardDraw
   CardDrawService --> IDeck : draws from
   CardDrawService --> IEventStore : raises events via
+  CardDrawService --> IRandomSource : picks index with
   CardsController --> ICardDrawService : uses
+  CardsController --> IIdempotentCardDraw : dedupes via
+  IdempotentCardDraw --> IdempotencyOptions : configured by
   EventFeedController --> IEventStore : uses
   EventStore --> Event : stores
   Deck --> Card : generates
@@ -350,12 +413,15 @@ classDiagram
 ```mermaid
 flowchart TB
     subgraph GameService
-        GameController[Draw endpoint]
-        CardClient[CardService client]
+        GameController[Draw endpoint GET /draw]
+        CardClient[CardService typed client]
+        Pipeline[Resilience pipeline:<br/>timeout, retry, circuit breaker]
+        ErrorHandler[Central error handling]
     end
     subgraph CardService
-        Controller[CardsController]
-        EventController[EventFeedController]
+        Controller[CardsController GET /cards/random]
+        EventController[EventFeedController GET /events]
+        Idempotency[Idempotent draw cache]
         AppService[CardDrawService]
         LocalDeck[Deck]
         Store[EventStore]
@@ -363,8 +429,11 @@ flowchart TB
     end
 
     GameController --> CardClient
-    CardClient -- HTTP GET --> Controller
-    Controller --> AppService
+    CardClient --> Pipeline
+    Pipeline -- "HTTP GET + Idempotency-Key + traceparent" --> Controller
+    GameController -. failures .-> ErrorHandler
+    Controller --> Idempotency
+    Idempotency --> AppService
     AppService --> LocalDeck
     AppService --> Store
     EventController --> Store
