@@ -339,6 +339,7 @@ Parts of this project (planning, code review, and boilerplate scaffolding) were 
 
 - [Class diagram (CardService)](docs/diagrams/class-diagram-cardservice.md) — the main types in CardService and how they relate.
 - [Package diagram](docs/diagrams/package-diagram.md) — how GameService and CardService are structured and how a draw flows between them.
+- [Resilience flow](docs/diagrams/resilience-flow.md) — how a `/draw` travels through GameService's timeout / retry / circuit-breaker pipeline and how each failure becomes an HTTP error.
 
 ## Related repositories
 
