@@ -37,7 +37,7 @@ flowchart TB
     nonretry5xx --> countN["Breaker counts it as a failure<br/>(all 5xx count, incl. 500)"]
     bad -. "other 4xx do NOT count" .-> noCount["Not counted by breaker"]
 
-    countT --> retry{Retry?<br/>attempts left<br/>(max 2 retries)?}
+    countT --> retry{"Retry?<br/>attempts left<br/>(max 2 retries)?"}
     retry -- "yes" --> backoff["Exponential back-off<br/>(~200 ms, ~400 ms, + jitter)"] --> attempt
     retry -- "no (retries exhausted)" --> classify
 
