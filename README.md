@@ -68,6 +68,9 @@ tests/
 docs/
 ├── api-contract.md            the HTTP contract (requests, responses, errors, events)
 └── adr/                       architecture decision records 0001–0011
+
+scripts/
+└── slow-card-service.ps1      no-dependency CardService stand-in for manual slow/failure demos
 ```
 
 ## Running locally
@@ -269,19 +272,41 @@ GameService fails promptly (it does not hang) with a 5xx error. On this machine 
 }
 ```
 
-**(b) Slow response via a low attempt timeout.** Note: an attempt timeout below **10 ms** is invalid (Polly's timeout floor), so `00:00:00.001` does **not** produce a 504 — the pipeline fails to build and the call returns `500 internal_error`:
+**(b) Slow / failing CardService via a stand-in.** Point GameService at the no-dependency stand-in `scripts/slow-card-service.ps1` (default port 5055) instead of the real CardService, using the `CardService__BaseUrl` environment variable. In one terminal start the stand-in; in another, start GameService pointed at it; then call `/draw`.
+
+*Slow success → timeout (504):* the stand-in waits 2 s (longer than the 500 ms attempt timeout), so every attempt times out and GameService returns 504:
 
 ```powershell
-$env:CardService__Resilience__AttemptTimeout = "00:00:00.001"
-dotnet run --project src\GameService    # then: Invoke-WebRequest http://localhost:5064/draw -UseBasicParsing
-Remove-Item Env:\CardService__Resilience__AttemptTimeout   # remove the override afterwards
+# terminal 1
+./scripts/slow-card-service.ps1 -DelayMs 2000 -StatusCode 200
+# terminal 2
+$env:CardService__BaseUrl = "http://localhost:5055"
+dotnet run --project src\GameService          # then, in a third terminal:
+Invoke-WebRequest http://localhost:5064/draw -UseBasicParsing
+Remove-Item Env:\CardService__BaseUrl          # remove the override afterwards
 ```
 
 ```json
-{ "error": "internal_error", "message": "Der opstod en uventet fejl.", "traceId": "719d6c63ff13692d5c62beea61795578" }
+{ "error": "card_service_timeout", "message": "Kortservicen svarede ikke i tide. Prøv igen om lidt.", "traceId": "5582ada0c673bd82a475bd3fef7b815f" }
 ```
 
-The lowest valid attempt timeout (10 ms) is still above CardService's ~1 ms warm response, so lowering the timeout can't reliably force a 504 against the real (fast) service. The deterministic 504 demonstration is the automated `Draw_MockSlow…` test, where the mock delays ~500 ms.
+*Persistent failure → retries, then the circuit breaker opens:* run the stand-in as a fast `503` (`-DelayMs 0 -StatusCode 503`) and call `/draw` repeatedly. Each draw retries and fails (`card_service_unavailable`); after two fully-failed draws the breaker opens and further draws are rejected immediately (`card_service_circuit_open`):
+
+```powershell
+./scripts/slow-card-service.ps1 -DelayMs 0 -StatusCode 503   # terminal 1
+# terminal 2 (GameService pointed at it as above), then:
+1..5 | ForEach-Object { try { Invoke-RestMethod http://localhost:5064/draw } catch { $_.ErrorDetails.Message } }
+```
+
+```text
+draw 1 -> 503 card_service_unavailable
+draw 2 -> 503 card_service_unavailable
+draw 3 -> 503 card_service_circuit_open
+draw 4 -> 503 card_service_circuit_open
+draw 5 -> 503 card_service_circuit_open
+```
+
+Note: lowering the attempt timeout instead does **not** work — a value below **10 ms** is invalid (Polly's timeout floor), so `CardService__Resilience__AttemptTimeout = "00:00:00.001"` makes the pipeline fail to build and the call returns `500 internal_error`; and the lowest valid value (10 ms) is still above the real CardService's ~1 ms warm response. The stand-in above is the reliable way to produce a timeout by hand; the deterministic automated version is the `Draw_MockSlow…` test.
 
 ### Requirement → where tested
 
